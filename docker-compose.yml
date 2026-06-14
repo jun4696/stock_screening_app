@@ -1,0 +1,22 @@
+services:
+  app:
+    build: .
+    container_name: stock_screening
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env                      # APIキーを .env から読み込む
+    environment:
+      - DB_FILE=/data/screening.db  # DBはボリュームに保存
+    volumes:
+      - db_data:/data              # SQLiteデータを永続化
+      - ./exports:/app/exports     # CSVエクスポート先（ホストから参照可能）
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  db_data:                         # 名前付きボリューム（コンテナ削除後も保持）

@@ -1,0 +1,19 @@
+# APIキーを含むファイルは絶対にコミットしない
+.env
+
+# SQLiteデータベース（個人データのため）
+*.db
+
+# CSVエクスポート
+screening_*.csv
+
+# Pythonキャッシュ
+__pycache__/
+*.pyc
+*.pyo
+
+# ログ
+*.log
+
+# macOS
+.DS_Store
