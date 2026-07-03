@@ -9,7 +9,8 @@ import csv
 import io
 import logging
 import os
-import sqlite3
+import psycopg
+from psycopg.rows import dict_row
 import time
 from collections import defaultdict
 from contextlib import contextmanager
@@ -28,7 +29,7 @@ load_dotenv()
 
 EDINETDB_KEY = os.getenv("EDINETDB_API_KEY")
 JQUANTS_KEY  = os.getenv("JQUANTS_API_KEY")
-DB_FILE      = os.getenv("DB_FILE", "/data/screening.db")
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 EDINET_BASE     = "https://edinetdb.jp/v1"
 JQUANTS_BASE    = "https://api.jquants.com/v2"
@@ -51,84 +52,91 @@ CSV_HEADER = [
 # ================================================================
 
 @contextmanager
-def get_db() -> Generator[sqlite3.Connection, None, None]:
-    """DB接続をコンテキストマネージャで管理。例外時も必ずcloseする。"""
-    conn = sqlite3.connect(DB_FILE)
-    conn.row_factory = sqlite3.Row
+def get_db() -> Generator[psycopg.Connection, None, None]:
+    """Postgres接続をコンテキストマネージャで管理。例外時も必ずcloseする。"""
+    if not DATABASE_URL:
+        raise RuntimeError("DATABASE_URL が未設定です。Postgres/Supabase の接続文字列を設定してください。")
+
+    conn = psycopg.connect(DATABASE_URL, row_factory=dict_row, prepare_threshold=None)
     try:
         yield conn
     finally:
         conn.close()
 
 
-def init_db(conn: sqlite3.Connection) -> None:
+def init_db(conn: psycopg.Connection) -> None:
     """テーブルとインデックスを初期化する（初回のみ作成）。"""
-    conn.executescript("""
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS financials_cache (
             edinet_code       TEXT PRIMARY KEY,
             name              TEXT,
             sec_code          TEXT,
             fiscal_year       INTEGER,
-            current_assets    REAL,
-            total_liabilities REAL,
-            eps               REAL,
-            bps               REAL,
-            shares_issued     INTEGER,
-            roa               REAL,
-            equity_ratio      REAL,
-            fetched_at        TEXT
-        );
-
+            current_assets    DOUBLE PRECISION,
+            total_liabilities DOUBLE PRECISION,
+            eps               DOUBLE PRECISION,
+            bps               DOUBLE PRECISION,
+            shares_issued     BIGINT,
+            roa               DOUBLE PRECISION,
+            equity_ratio      DOUBLE PRECISION,
+            fetched_at        DATE
+        )
+    """)
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS screening_results (
-            id                INTEGER PRIMARY KEY AUTOINCREMENT,
-            run_date          TEXT,
+            id                BIGSERIAL PRIMARY KEY,
+            run_date          DATE,
             sec_code          TEXT,
             name              TEXT,
             fiscal_year       INTEGER,
-            close_price       REAL,
-            current_assets    REAL,
-            total_liabilities REAL,
-            gap_oku           REAL,
-            roa               REAL,
-            equity_ratio      REAL,
-            per               REAL,
-            pbr               REAL,
-            market_cap_oku    REAL,
-            net_cash_ratio    REAL
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_results_run_date
-            ON screening_results(run_date);
-        CREATE INDEX IF NOT EXISTS idx_results_sec_code
-            ON screening_results(sec_code);
+            close_price       DOUBLE PRECISION,
+            current_assets    DOUBLE PRECISION,
+            total_liabilities DOUBLE PRECISION,
+            gap_oku           DOUBLE PRECISION,
+            roa               DOUBLE PRECISION,
+            equity_ratio      DOUBLE PRECISION,
+            per               DOUBLE PRECISION,
+            pbr               DOUBLE PRECISION,
+            market_cap_oku    DOUBLE PRECISION,
+            net_cash_ratio    DOUBLE PRECISION
+        )
     """)
-
-    columns = {
-        row["name"]
-        for row in conn.execute("PRAGMA table_info(screening_results)").fetchall()
-    }
-    if "net_cash_ratio" not in columns:
-        conn.execute("ALTER TABLE screening_results ADD COLUMN net_cash_ratio REAL")
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_results_run_date
+            ON screening_results(run_date)
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_results_sec_code
+            ON screening_results(sec_code)
+    """)
+    conn.execute("""
+        ALTER TABLE screening_results
+        ADD COLUMN IF NOT EXISTS net_cash_ratio DOUBLE PRECISION
+    """)
     conn.commit()
+
+
+def _date_iso(value) -> str:
+    return value.isoformat() if hasattr(value, "isoformat") else str(value)
 
 
 # ================================================================
 # 財務データキャッシュ
 # ================================================================
 
-def get_cached_financials(conn: sqlite3.Connection, edinet_code: str) -> dict | None:
+def get_cached_financials(conn: psycopg.Connection, edinet_code: str) -> dict | None:
     row = conn.execute(
-        "SELECT * FROM financials_cache WHERE edinet_code = ?", (edinet_code,)
+        "SELECT * FROM financials_cache WHERE edinet_code = %s", (edinet_code,)
     ).fetchone()
     if row is None:
         return None
-    if (date.today() - date.fromisoformat(row["fetched_at"])).days > CACHE_DAYS:
+    if (date.today() - date.fromisoformat(_date_iso(row["fetched_at"]))).days > CACHE_DAYS:
         return None
     return dict(row)
 
 
 def save_financials_cache(
-    conn: sqlite3.Connection,
+    conn: psycopg.Connection,
     edinet_code: str,
     name: str,
     sec_code: str,
@@ -137,11 +145,27 @@ def save_financials_cache(
     equity_ratio = data.get("equity_ratio_official") or data.get("equity_ratio")
     conn.execute(
         """
-        INSERT OR REPLACE INTO financials_cache VALUES (
-            :edinet_code, :name, :sec_code, :fiscal_year,
-            :current_assets, :total_liabilities,
-            :eps, :bps, :shares_issued, :roa, :equity_ratio, :fetched_at
+        INSERT INTO financials_cache (
+            edinet_code, name, sec_code, fiscal_year,
+            current_assets, total_liabilities,
+            eps, bps, shares_issued, roa, equity_ratio, fetched_at
+        ) VALUES (
+            %(edinet_code)s, %(name)s, %(sec_code)s, %(fiscal_year)s,
+            %(current_assets)s, %(total_liabilities)s,
+            %(eps)s, %(bps)s, %(shares_issued)s, %(roa)s, %(equity_ratio)s, %(fetched_at)s
         )
+        ON CONFLICT (edinet_code) DO UPDATE SET
+            name = EXCLUDED.name,
+            sec_code = EXCLUDED.sec_code,
+            fiscal_year = EXCLUDED.fiscal_year,
+            current_assets = EXCLUDED.current_assets,
+            total_liabilities = EXCLUDED.total_liabilities,
+            eps = EXCLUDED.eps,
+            bps = EXCLUDED.bps,
+            shares_issued = EXCLUDED.shares_issued,
+            roa = EXCLUDED.roa,
+            equity_ratio = EXCLUDED.equity_ratio,
+            fetched_at = EXCLUDED.fetched_at
         """,
         {
             "edinet_code":       edinet_code,
@@ -165,6 +189,15 @@ def _to_float(value) -> float | None:
         return None
     try:
         return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _to_int(value) -> int | None:
+    if value in (None, "", "?"):
+        return None
+    try:
+        return int(value)
     except (TypeError, ValueError):
         return None
 
@@ -315,7 +348,7 @@ def run_screening(
             equity_ratio      = (
                 latest.get("equity_ratio_official") or latest.get("equity_ratio")
             )
-            fiscal_year = co.get("fiscalYear") or latest.get("fiscal_year", "?")
+            fiscal_year = _to_int(co.get("fiscalYear") or latest.get("fiscal_year"))
             per_rt = _to_float(co.get("per"))
             pbr_rt = _to_float(co.get("pbr"))
             market_cap_million = _to_float(co.get("market-cap"))
@@ -370,9 +403,9 @@ def run_screening(
                     close_price, current_assets, total_liabilities, gap_oku,
                     roa, equity_ratio, per, pbr, market_cap_oku, net_cash_ratio
                 ) VALUES (
-                    :run_date, :sec_code, :name, :fiscal_year,
-                    :close_price, :current_assets, :total_liabilities, :gap_oku,
-                    :roa, :equity_ratio, :per, :pbr, :market_cap_oku, :net_cash_ratio
+                    %(run_date)s, %(sec_code)s, %(name)s, %(fiscal_year)s,
+                    %(close_price)s, %(current_assets)s, %(total_liabilities)s, %(gap_oku)s,
+                    %(roa)s, %(equity_ratio)s, %(per)s, %(pbr)s, %(market_cap_oku)s, %(net_cash_ratio)s
                 )
                 """,
                 pending,
@@ -407,7 +440,7 @@ def get_results_by_date(run_date: str) -> list[dict]:
     """指定日のスクリーニング結果を返す。"""
     with get_db() as conn:
         rows = conn.execute(
-            "SELECT * FROM screening_results WHERE run_date = ? ORDER BY net_cash_ratio DESC",
+            "SELECT * FROM screening_results WHERE run_date = %s ORDER BY net_cash_ratio DESC",
             (run_date,),
         ).fetchall()
     return [dict(r) for r in rows]
@@ -418,9 +451,9 @@ def get_stock_history(sec_code: str) -> list[dict]:
     with get_db() as conn:
         rows = conn.execute(
             """
-            SELECT run_date, close_price, per, pbr, gap_oku, market_cap_oku, net_cash_ratio
+            SELECT run_date, name, close_price, per, pbr, gap_oku, market_cap_oku, net_cash_ratio
             FROM screening_results
-            WHERE sec_code = ?
+            WHERE sec_code = %s
             ORDER BY run_date DESC
             """,
             (sec_code,),
@@ -439,7 +472,7 @@ def get_streak_ranking(min_hits: int = 1) -> list[dict]:
             """
         ).fetchall()
         all_dates = [
-            r["run_date"]
+            _date_iso(r["run_date"])
             for r in conn.execute(
                 "SELECT DISTINCT run_date FROM screening_results ORDER BY run_date DESC"
             ).fetchall()
@@ -448,7 +481,7 @@ def get_streak_ranking(min_hits: int = 1) -> list[dict]:
     stock_dates: dict[str, list] = defaultdict(list)
     stock_names: dict[str, str]  = {}
     for row in rows:
-        stock_dates[row["sec_code"]].append(row["run_date"])
+        stock_dates[row["sec_code"]].append(_date_iso(row["run_date"]))
         stock_names[row["sec_code"]] = row["name"]
 
     results = []
@@ -485,7 +518,7 @@ def get_all_results() -> list[dict]:
 
 def _row_to_csv_list(row: dict) -> list:
     return [
-        row["run_date"],
+        _date_iso(row["run_date"]),
         row["name"],
         row["sec_code"],
         row["fiscal_year"],

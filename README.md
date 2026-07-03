@@ -1,6 +1,6 @@
 # 株式スクリーニングツール
 
-EDINET DB API を使って財務条件と市場指標でスクリーニングし、現在株価のみJ-Quants APIから取得して表示します。結果はSQLiteに蓄積して銘柄を継続追跡できます。
+EDINET DB API を使って財務条件と市場指標でスクリーニングし、現在株価のみJ-Quants APIから取得して表示します。結果はPostgresに蓄積して銘柄を継続追跡できます。Render本番ではSupabase Postgresを使う想定です。
 
 ---
 
@@ -21,6 +21,7 @@ EDINET DB API を使って財務条件と市場指標でスクリーニングし
 ## 必要なもの
 
 - Docker & Docker Compose
+- Postgres（ローカルDockerでは自動起動。本番はSupabase推奨）
 - [EDINET DB](https://edinetdb.jp/developers) のAPIキー（無料: 1日100回）
 - [J-Quants](https://jpx-jquants.com/) のAPIキー（現在株価表示用）
 
@@ -46,9 +47,12 @@ cp .env.example .env
 ```
 EDINETDB_API_KEY=edb_実際のキーを貼る
 JQUANTS_API_KEY=実際のキーを貼る
+
+# 本番(Render)ではSupabaseの接続文字列を設定
+DATABASE_URL=postgresql://postgres.<project-ref>:<password>@aws-0-ap-northeast-1.pooler.supabase.com:6543/postgres?sslmode=require
 ```
 
-> ⚠️ `.env` はGitにコミットしないでください（`.gitignore` で除外済みです）。
+> `.env` はGitにコミットしないでください（`.gitignore` で除外済みです）。Renderでは `EDINETDB_API_KEY`、`JQUANTS_API_KEY`、`DATABASE_URL` を環境変数として入力します。
 
 ### 3. Dockerで起動
 
@@ -78,22 +82,14 @@ docker compose up --build
 
 ---
 
-## 定期実行（cronで毎日自動スクリーニング）
+## Render + Supabase での本番設定
 
-コンテナが起動したまま毎日実行するにはホスト側のcronを使います。
+1. Supabaseで新規プロジェクトを作成します。
+2. Project Settings → Database から接続文字列を取得します。Renderから接続するため `sslmode=require` を付けてください。
+3. Render Blueprintでこのリポジトリを同期します。
+4. Renderの環境変数に `EDINETDB_API_KEY`、`JQUANTS_API_KEY`、`DATABASE_URL` を入力します。
 
-```bash
-bash setup_cron.sh
-```
-
-対話形式で実行時刻を選べます（毎朝8:00・9:30、毎夕18:00など）。
-
-または `crontab -e` で直接追加する場合:
-
-```
-# 毎朝8時（平日のみ）にスクリーニングを実行
-0 8 * * 1-5 docker compose -f /path/to/docker-compose.yml exec -T app python screening.py >> /path/to/screening.log 2>&1
-```
+Supabase Free の Nano は推奨DBサイズ500MB、DB接続60、Pooler 200です。個人利用や小規模な履歴保存なら十分ですが、長期運用で財務キャッシュと実行履歴を無制限に溜める設計ではありません。
 
 ---
 
@@ -104,10 +100,10 @@ bash setup_cron.sh
 ├── app.py              # Streamlit フロントエンド
 ├── screening.py        # スクリーニングロジック（UIなし）
 ├── check_history.py    # 履歴確認 CLIツール
-├── setup_cron.sh       # 定期実行セットアップ
 ├── requirements.txt    # Python依存ライブラリ
 ├── Dockerfile          # Dockerイメージ定義
-├── docker-compose.yml  # サービス構成・ボリューム設定
+├── docker-compose.yml  # アプリ + ローカルPostgres構成
+├── render.yaml         # Render Blueprint
 ├── .env.example        # APIキー設定テンプレート
 ├── .gitignore          # .env / .db / .csv を除外
 ├── README.md           # このファイル
@@ -116,7 +112,7 @@ bash setup_cron.sh
 └── exports/            # ★ CSVエクスポート先（自動生成）
 ```
 
-> SQLiteのDBファイルはDockerの名前付きボリューム（`db_data`）に保存されます。コンテナを削除してもデータは保持されます。
+> ローカル開発ではPostgresのデータがDockerの名前付きボリューム（`pg_data`）に保存されます。Render本番ではSupabase Postgresに保存します。
 
 ---
 
@@ -145,7 +141,8 @@ python check_history.py     # CLI履歴確認
 
 ## 注意事項
 
-- **EDINET DB Freeプラン**: 1日100リクエストまで無料。財務データはDBキャッシュ（30日間）でAPIリクエストを節約します。
+- **EDINET DB Freeプラン**: 1日100リクエストまで無料。財務データはPostgresキャッシュ（30日間）でAPIリクエストを節約します。
+- **Supabase Free**: 小規模利用には十分ですが、500MBを超える履歴保存や高頻度アクセスには向きません。
 - **投資判断**: このツールの出力はあくまで参考情報です。実際の投資判断はご自身の責任で行ってください。
 
 ---

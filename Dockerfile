@@ -16,8 +16,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 # アプリコードをコピー
 COPY screening.py app.py check_history.py ./
 
-# SQLiteのデータ保存用ディレクトリを作成
-RUN mkdir -p /data
 
 # Streamlitのデフォルトポート
 EXPOSE 8501

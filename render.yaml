@@ -4,7 +4,7 @@ services:
     runtime: docker
     repo: https://github.com/jun4696/stock_screening_app.git
     branch: master
-    plan: starter
+    plan: free
     region: singapore
     healthCheckPath: /_stcore/health
     autoDeployTrigger: commit
@@ -13,11 +13,7 @@ services:
         sync: false
       - key: JQUANTS_API_KEY
         sync: false
-      - key: DB_FILE
-        value: /data/screening.db
+      - key: DATABASE_URL
+        sync: false
       - key: TZ
         value: Asia/Tokyo
-    disk:
-      name: stock-screening-data
-      mountPath: /data
-      sizeGB: 1

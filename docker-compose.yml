@@ -5,12 +5,14 @@ services:
     ports:
       - "8501:8501"
     env_file:
-      - .env                      # APIキーを .env から読み込む
+      - .env
     environment:
-      - DB_FILE=/data/screening.db  # DBはボリュームに保存
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/stock_screening
+    depends_on:
+      db:
+        condition: service_healthy
     volumes:
-      - db_data:/data              # SQLiteデータを永続化
-      - ./exports:/app/exports     # CSVエクスポート先（ホストから参照可能）
+      - ./exports:/app/exports
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
@@ -18,5 +20,21 @@ services:
       timeout: 10s
       retries: 3
 
+  db:
+    image: postgres:16-alpine
+    container_name: stock_screening_db
+    environment:
+      - POSTGRES_DB=stock_screening
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d stock_screening"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
 volumes:
-  db_data:                         # 名前付きボリューム（コンテナ削除後も保持）
+  pg_data:
