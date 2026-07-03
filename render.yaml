@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: stock-screening-app
+    runtime: docker
+    repo: https://github.com/jun4696/stock_screening_app.git
+    branch: master
+    plan: starter
+    region: singapore
+    healthCheckPath: /_stcore/health
+    autoDeployTrigger: commit
+    envVars:
+      - key: EDINETDB_API_KEY
+        sync: false
+      - key: JQUANTS_API_KEY
+        sync: false
+      - key: DB_FILE
+        value: /data/screening.db
+      - key: TZ
+        value: Asia/Tokyo
+    disk:
+      name: stock-screening-data
+      mountPath: /data
+      sizeGB: 1
