@@ -14,6 +14,7 @@ import streamlit as st
 from dotenv import load_dotenv
 
 from screening import (
+    delete_screening_result,
     export_csv_bytes,
     get_all_results,
     get_results_by_date,
@@ -30,6 +31,15 @@ load_dotenv()
 # APIキー確認
 EDINETDB_KEY = os.getenv("EDINETDB_API_KEY")
 JQUANTS_KEY  = os.getenv("JQUANTS_API_KEY")
+
+
+def _delete_option_label(row: dict) -> str:
+    run_date = row.get("run_date", "")
+    sec_code = row.get("sec_code", "")
+    name = row.get("name", "")
+    ratio = row.get("net_cash_ratio")
+    ratio_text = f" / NC比率 {ratio}%" if ratio is not None else ""
+    return f"{run_date} / {sec_code} / {name}{ratio_text}"
 
 
 def _results_to_df(results: list[dict]) -> pd.DataFrame:
@@ -238,6 +248,25 @@ elif page == "📊 履歴・銘柄追跡":
                     file_name=f"screening_{selected}.csv",
                     mime="text/csv",
                 )
+
+                st.divider()
+                st.subheader("履歴レコード削除")
+                delete_target = st.selectbox(
+                    "削除する銘柄履歴を選択",
+                    day_results,
+                    format_func=_delete_option_label,
+                    key=f"delete_day_{selected}",
+                )
+                confirm_delete = st.checkbox(
+                    "この1件を履歴から削除する",
+                    key=f"confirm_delete_day_{selected}",
+                )
+                if st.button("選択した履歴を削除", type="secondary", disabled=not confirm_delete, key=f"delete_day_button_{selected}"):
+                    if delete_screening_result(int(delete_target["id"])):
+                        st.success("履歴を1件削除しました。")
+                        st.rerun()
+                    else:
+                        st.error("削除対象が見つかりませんでした。画面を更新してください。")
             else:
                 st.info("この日の結果はありません。")
 
@@ -260,6 +289,25 @@ elif page == "📊 履歴・銘柄追跡":
                 df_hist.columns = ["日付", "現在株価(円)", "PER(倍)", "PBR(倍)", "差額(億円)", "時価総額(億円)", "ネットキャッシュ比率(%)"]
 
                 st.dataframe(df_hist, use_container_width=True, hide_index=True)
+
+                st.divider()
+                st.subheader("この銘柄の履歴削除")
+                delete_target = st.selectbox(
+                    "削除する履歴を選択",
+                    history,
+                    format_func=_delete_option_label,
+                    key=f"delete_stock_{sec_code_input.strip()}",
+                )
+                confirm_delete = st.checkbox(
+                    "この1件を履歴から削除する",
+                    key=f"confirm_delete_stock_{sec_code_input.strip()}",
+                )
+                if st.button("選択した履歴を削除", type="secondary", disabled=not confirm_delete, key=f"delete_stock_button_{sec_code_input.strip()}"):
+                    if delete_screening_result(int(delete_target["id"])):
+                        st.success("履歴を1件削除しました。")
+                        st.rerun()
+                    else:
+                        st.error("削除対象が見つかりませんでした。画面を更新してください。")
 
 
 # ================================================================

@@ -451,7 +451,7 @@ def get_stock_history(sec_code: str) -> list[dict]:
     with get_db() as conn:
         rows = conn.execute(
             """
-            SELECT run_date, name, close_price, per, pbr, gap_oku, market_cap_oku, net_cash_ratio
+            SELECT id, run_date, sec_code, name, close_price, per, pbr, gap_oku, market_cap_oku, net_cash_ratio
             FROM screening_results
             WHERE sec_code = %s
             ORDER BY run_date DESC
@@ -459,6 +459,17 @@ def get_stock_history(sec_code: str) -> list[dict]:
             (sec_code,),
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+def delete_screening_result(result_id: int) -> bool:
+    """履歴レコードをID指定で1件削除する。削除できた場合のみTrueを返す。"""
+    with get_db() as conn:
+        cur = conn.execute(
+            "DELETE FROM screening_results WHERE id = %s",
+            (result_id,),
+        )
+        conn.commit()
+    return cur.rowcount == 1
 
 
 def get_streak_ranking(min_hits: int = 1) -> list[dict]:
