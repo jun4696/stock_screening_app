@@ -396,20 +396,21 @@ def run_screening(
 
         # 一括INSERT & commit
         if pending:
-            conn.executemany(
-                """
-                INSERT INTO screening_results (
-                    run_date, sec_code, name, fiscal_year,
-                    close_price, current_assets, total_liabilities, gap_oku,
-                    roa, equity_ratio, per, pbr, market_cap_oku, net_cash_ratio
-                ) VALUES (
-                    %(run_date)s, %(sec_code)s, %(name)s, %(fiscal_year)s,
-                    %(close_price)s, %(current_assets)s, %(total_liabilities)s, %(gap_oku)s,
-                    %(roa)s, %(equity_ratio)s, %(per)s, %(pbr)s, %(market_cap_oku)s, %(net_cash_ratio)s
+            with conn.cursor() as cur:
+                cur.executemany(
+                    """
+                    INSERT INTO screening_results (
+                        run_date, sec_code, name, fiscal_year,
+                        close_price, current_assets, total_liabilities, gap_oku,
+                        roa, equity_ratio, per, pbr, market_cap_oku, net_cash_ratio
+                    ) VALUES (
+                        %(run_date)s, %(sec_code)s, %(name)s, %(fiscal_year)s,
+                        %(close_price)s, %(current_assets)s, %(total_liabilities)s, %(gap_oku)s,
+                        %(roa)s, %(equity_ratio)s, %(per)s, %(pbr)s, %(market_cap_oku)s, %(net_cash_ratio)s
+                    )
+                    """,
+                    pending,
                 )
-                """,
-                pending,
-            )
         conn.commit()
 
     pending.sort(key=lambda x: x["net_cash_ratio"] or 0, reverse=True)
