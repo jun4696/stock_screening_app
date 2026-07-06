@@ -33,6 +33,42 @@ EDINETDB_KEY = os.getenv("EDINETDB_API_KEY")
 JQUANTS_KEY  = os.getenv("JQUANTS_API_KEY")
 
 
+INDUSTRIES = [
+    "水産・農林業",
+    "鉱業",
+    "建設業",
+    "食料品",
+    "繊維製品",
+    "パルプ・紙",
+    "化学",
+    "医薬品",
+    "石油・石炭製品",
+    "ゴム製品",
+    "ガラス・土石製品",
+    "鉄鋼",
+    "非鉄金属",
+    "金属製品",
+    "機械",
+    "電気機器",
+    "輸送用機器",
+    "精密機器",
+    "その他製品",
+    "電気・ガス業",
+    "陸運業",
+    "海運業",
+    "空運業",
+    "倉庫・運輸関連",
+    "情報・通信業",
+    "卸売業",
+    "小売業",
+    "銀行業",
+    "証券、商品先物取引業",
+    "保険業",
+    "その他金融業",
+    "不動産業",
+    "サービス業",
+]
+
 def _delete_option_label(row: dict) -> str:
     run_date = row.get("run_date", "")
     sec_code = row.get("sec_code", "")
@@ -117,6 +153,7 @@ if page == "🔍 スクリーニング実行":
     with col1:
         st.markdown("**EDINET DB（財務条件）**")
         st.info("流動資産 > 負債合計の銘柄を対象にします。")
+        selected_industry = st.selectbox("業種", ["すべて"] + INDUSTRIES)
         candidate_limit = st.number_input(
             "最大取得件数",
             min_value=1,
@@ -149,6 +186,8 @@ if page == "🔍 スクリーニング実行":
             "market_cap_lte": market_cap_max * 100,
             "sort": "market_cap",
         }
+        if selected_industry != "すべて":
+            screener_params["industry"] = selected_industry
 
         progress_text = st.empty()
         progress_bar  = st.progress(0)
