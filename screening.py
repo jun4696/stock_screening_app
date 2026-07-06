@@ -250,6 +250,7 @@ def run_screening(
     pbr_max: float,
     market_cap_max: float,
     net_cash_ratio_min: float,
+    candidate_limit: int,
     progress_cb=None,   # Streamlit の st.empty() などを受け取るコールバック
 ) -> tuple[list[dict], dict]:
     """
@@ -261,6 +262,7 @@ def run_screening(
         pbr_max:         PBR上限
         market_cap_max:  時価総額上限（億円）
         net_cash_ratio_min: ネットキャッシュ比率下限（%）
+        candidate_limit:  EDINET DB screenerから取得して処理する最大候補数
         progress_cb:     進捗コールバック。呼ばれるたびに (current, total, message) を受け取る。
 
     Returns:
@@ -270,13 +272,14 @@ def run_screening(
     """
     _price_cache.clear()   # 実行ごとにキャッシュをリセット
     run_date = date.today().isoformat()
-    stats = {"candidates": 0, "cache_hit": 0, "skipped": 0}
+    candidate_limit = max(1, min(int(candidate_limit), 1000))
+    stats = {"candidates": 0, "processed": 0, "cache_hit": 0, "skipped": 0}
 
     # ステップ1: EDINET DBスクリーニング
     try:
         res = requests.get(
             f"{EDINET_BASE}/screener",
-            params={**params, "limit": 1000},
+            params={**params, "limit": candidate_limit},
             headers=EDINET_HEADERS,
             timeout=15,
         )
@@ -289,7 +292,7 @@ def run_screening(
     except requests.RequestException as e:
         raise RuntimeError(f"EDINET DB スクリーニング失敗: {e}") from e
 
-    candidates = res.json()["data"]["companies"]
+    candidates = res.json()["data"]["companies"][:candidate_limit]
     stats["candidates"] = len(candidates)
 
     if not candidates:
@@ -301,6 +304,7 @@ def run_screening(
         init_db(conn)
 
         for i, co in enumerate(candidates, 1):
+            stats["processed"] = i
             edinet_code = co.get("edinetCode")
             name        = co.get("filerName", "不明")
             sec_code    = co.get("secCode", "")

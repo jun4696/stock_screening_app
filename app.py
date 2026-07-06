@@ -117,6 +117,14 @@ if page == "🔍 スクリーニング実行":
     with col1:
         st.markdown("**EDINET DB（財務条件）**")
         st.info("流動資産 > 負債合計の銘柄を対象にします。")
+        candidate_limit = st.number_input(
+            "最大取得件数",
+            min_value=1,
+            max_value=1000,
+            value=30,
+            step=10,
+            help="EDINET DBから詳細財務データを確認する最大候補数です。Free枠では小さめにしてください。",
+        )
 
     with col2:
         st.markdown("**EDINET DB（市場指標）**")
@@ -157,6 +165,7 @@ if page == "🔍 スクリーニング実行":
                     pbr_max=pbr_max,
                     market_cap_max=market_cap_max,
                     net_cash_ratio_min=net_cash_ratio_min,
+                    candidate_limit=candidate_limit,
                     progress_cb=on_progress,
                 )
         except RuntimeError as e:
@@ -168,11 +177,12 @@ if page == "🔍 スクリーニング実行":
 
         # ---- 結果表示 ----
         st.subheader("実行結果")
-        col_a, col_b, col_c, col_d = st.columns(4)
-        col_a.metric("候補社数",         stats["candidates"])
-        col_b.metric("条件クリア",        len(results))
-        col_c.metric("キャッシュ利用",    stats["cache_hit"])
-        col_d.metric("スキップ",          stats["skipped"])
+        col_a, col_b, col_c, col_d, col_e = st.columns(5)
+        col_a.metric("取得候補",          stats["candidates"])
+        col_b.metric("処理済み",          stats.get("processed", 0))
+        col_c.metric("条件クリア",        len(results))
+        col_d.metric("キャッシュ利用",    stats["cache_hit"])
+        col_e.metric("スキップ",          stats["skipped"])
 
         if not results:
             st.warning("条件に合う銘柄がありませんでした。条件を緩めてみてください。")
