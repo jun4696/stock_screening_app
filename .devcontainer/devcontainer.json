@@ -1,0 +1,16 @@
+{
+  "name": "stock_screening_app (Claude Code)",
+  "build": {
+    "context": "..",
+    "dockerfile": "Dockerfile"
+  },
+  "remoteUser": "vscode",
+
+  "containerEnv": {
+    "ANTHROPIC_API_KEY": "${localEnv:ANTHROPIC_API_KEY}"
+  },
+
+  "forwardPorts": [8501],
+
+  "postCreateCommand": "claude --version"
+}
