@@ -9,10 +9,8 @@ import csv
 import io
 import logging
 import os
-import psycopg
-from psycopg.rows import dict_row
+import sqlite3
 import time
-from collections import defaultdict
 from contextlib import contextmanager
 from datetime import date, timedelta
 from typing import Generator
@@ -29,7 +27,7 @@ load_dotenv()
 
 EDINETDB_KEY = os.getenv("EDINETDB_API_KEY")
 JQUANTS_KEY  = os.getenv("JQUANTS_API_KEY")
-DATABASE_URL = os.getenv("DATABASE_URL")
+CACHE_DB_PATH = "data/financials_cache.db"
 
 EDINET_BASE     = "https://edinetdb.jp/v1"
 JQUANTS_BASE    = "https://api.jquants.com/v2"
@@ -49,105 +47,70 @@ CSV_HEADER = [
 
 # ================================================================
 # DB ユーティリティ
+# EDINET DB無料枠のレート制限（100回/日）を節約するための財務データキャッシュ。
+# 実行履歴は保存しない（この用途専用の軽量なSQLiteファイル）。
 # ================================================================
 
 @contextmanager
-def get_db() -> Generator[psycopg.Connection, None, None]:
-    """Postgres接続をコンテキストマネージャで管理。例外時も必ずcloseする。"""
-    if not DATABASE_URL:
-        raise RuntimeError("DATABASE_URL が未設定です。Postgres/Supabase の接続文字列を設定してください。")
-
-    conn = psycopg.connect(DATABASE_URL, row_factory=dict_row, prepare_threshold=None)
+def get_db() -> Generator[sqlite3.Connection, None, None]:
+    """SQLite接続をコンテキストマネージャで管理。例外時も必ずcloseする。"""
+    os.makedirs(os.path.dirname(CACHE_DB_PATH) or ".", exist_ok=True)
+    conn = sqlite3.connect(CACHE_DB_PATH)
+    conn.row_factory = sqlite3.Row
     try:
         yield conn
     finally:
         conn.close()
 
 
-def init_db(conn: psycopg.Connection) -> None:
-    """テーブルとインデックスを初期化する（初回のみ作成）。"""
+def init_db(conn: sqlite3.Connection) -> None:
+    """財務データキャッシュテーブルを初期化する（初回のみ作成）。"""
     conn.execute("""
         CREATE TABLE IF NOT EXISTS financials_cache (
             edinet_code       TEXT PRIMARY KEY,
             name              TEXT,
             sec_code          TEXT,
             fiscal_year       INTEGER,
-            current_assets    DOUBLE PRECISION,
-            total_liabilities DOUBLE PRECISION,
-            eps               DOUBLE PRECISION,
-            bps               DOUBLE PRECISION,
-            shares_issued     BIGINT,
-            roa               DOUBLE PRECISION,
-            equity_ratio      DOUBLE PRECISION,
-            fetched_at        DATE
+            current_assets    REAL,
+            total_liabilities REAL,
+            eps               REAL,
+            bps               REAL,
+            shares_issued     INTEGER,
+            roa               REAL,
+            equity_ratio      REAL,
+            fetched_at        TEXT
         )
-    """)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS screening_results (
-            id                BIGSERIAL PRIMARY KEY,
-            run_date          DATE,
-            sec_code          TEXT,
-            name              TEXT,
-            fiscal_year       INTEGER,
-            close_price       DOUBLE PRECISION,
-            current_assets    DOUBLE PRECISION,
-            total_liabilities DOUBLE PRECISION,
-            gap_oku           DOUBLE PRECISION,
-            roa               DOUBLE PRECISION,
-            equity_ratio      DOUBLE PRECISION,
-            per               DOUBLE PRECISION,
-            pbr               DOUBLE PRECISION,
-            market_cap_oku    DOUBLE PRECISION,
-            net_cash_ratio    DOUBLE PRECISION,
-            dividend_yield    DOUBLE PRECISION
-        )
-    """)
-    conn.execute("""
-        CREATE INDEX IF NOT EXISTS idx_results_run_date
-            ON screening_results(run_date)
-    """)
-    conn.execute("""
-        CREATE INDEX IF NOT EXISTS idx_results_sec_code
-            ON screening_results(sec_code)
-    """)
-    conn.execute("""
-        ALTER TABLE screening_results
-        ADD COLUMN IF NOT EXISTS net_cash_ratio DOUBLE PRECISION
-    """)
-    conn.execute("""
-        ALTER TABLE screening_results
-        ADD COLUMN IF NOT EXISTS dividend_yield DOUBLE PRECISION
     """)
     conn.commit()
-
-
-def _date_iso(value) -> str:
-    return value.isoformat() if hasattr(value, "isoformat") else str(value)
 
 
 # ================================================================
 # 財務データキャッシュ
 # ================================================================
 
-def get_cached_financials(conn: psycopg.Connection, edinet_code: str) -> dict | None:
+def get_cached_financials(conn: sqlite3.Connection, edinet_code: str) -> dict | None:
     row = conn.execute(
-        "SELECT * FROM financials_cache WHERE edinet_code = %s", (edinet_code,)
+        "SELECT * FROM financials_cache WHERE edinet_code = ?", (edinet_code,)
     ).fetchone()
     if row is None:
         return None
-    if (date.today() - date.fromisoformat(_date_iso(row["fetched_at"]))).days > CACHE_DAYS:
+    if (date.today() - date.fromisoformat(row["fetched_at"])).days > CACHE_DAYS:
         return None
     return dict(row)
 
 
+def _resolve_equity_ratio(data: dict) -> float | None:
+    """有報記載の公式値を優先し、なければ簡易equity_ratioにフォールバックする。"""
+    return data.get("equity_ratio_official") or data.get("equity_ratio")
+
+
 def save_financials_cache(
-    conn: psycopg.Connection,
+    conn: sqlite3.Connection,
     edinet_code: str,
     name: str,
     sec_code: str,
     data: dict,
 ) -> None:
-    equity_ratio = data.get("equity_ratio_official") or data.get("equity_ratio")
     conn.execute(
         """
         INSERT INTO financials_cache (
@@ -155,22 +118,22 @@ def save_financials_cache(
             current_assets, total_liabilities,
             eps, bps, shares_issued, roa, equity_ratio, fetched_at
         ) VALUES (
-            %(edinet_code)s, %(name)s, %(sec_code)s, %(fiscal_year)s,
-            %(current_assets)s, %(total_liabilities)s,
-            %(eps)s, %(bps)s, %(shares_issued)s, %(roa)s, %(equity_ratio)s, %(fetched_at)s
+            :edinet_code, :name, :sec_code, :fiscal_year,
+            :current_assets, :total_liabilities,
+            :eps, :bps, :shares_issued, :roa, :equity_ratio, :fetched_at
         )
-        ON CONFLICT (edinet_code) DO UPDATE SET
-            name = EXCLUDED.name,
-            sec_code = EXCLUDED.sec_code,
-            fiscal_year = EXCLUDED.fiscal_year,
-            current_assets = EXCLUDED.current_assets,
-            total_liabilities = EXCLUDED.total_liabilities,
-            eps = EXCLUDED.eps,
-            bps = EXCLUDED.bps,
-            shares_issued = EXCLUDED.shares_issued,
-            roa = EXCLUDED.roa,
-            equity_ratio = EXCLUDED.equity_ratio,
-            fetched_at = EXCLUDED.fetched_at
+        ON CONFLICT(edinet_code) DO UPDATE SET
+            name = excluded.name,
+            sec_code = excluded.sec_code,
+            fiscal_year = excluded.fiscal_year,
+            current_assets = excluded.current_assets,
+            total_liabilities = excluded.total_liabilities,
+            eps = excluded.eps,
+            bps = excluded.bps,
+            shares_issued = excluded.shares_issued,
+            roa = excluded.roa,
+            equity_ratio = excluded.equity_ratio,
+            fetched_at = excluded.fetched_at
         """,
         {
             "edinet_code":       edinet_code,
@@ -183,7 +146,7 @@ def save_financials_cache(
             "bps":               data.get("bps"),
             "shares_issued":     data.get("shares_issued"),
             "roa":               data.get("roa"),
-            "equity_ratio":      equity_ratio,
+            "equity_ratio":      _resolve_equity_ratio(data),
             "fetched_at":        date.today().isoformat(),
         },
     )
@@ -288,7 +251,7 @@ def run_screening(
 
     Returns:
         (results, stats)
-        results: 条件クリアした銘柄のリスト（dict）
+        results: 条件クリアした銘柄のリスト（dict）。この実行だけの結果で、DBには保存されない。
         stats:   {"candidates": int, "cache_hit": int, "skipped": int}
     """
     _price_cache.clear()   # 実行ごとにキャッシュをリセット
@@ -370,9 +333,7 @@ def run_screening(
             current_assets    = latest.get("current_assets")
             total_liabilities = latest.get("total_liabilities")
             roa               = latest.get("roa")
-            equity_ratio      = (
-                latest.get("equity_ratio_official") or latest.get("equity_ratio")
-            )
+            equity_ratio      = _resolve_equity_ratio(latest)
             fiscal_year = _to_int(co.get("fiscalYear") or latest.get("fiscal_year"))
             per_rt = _to_float(co.get("per"))
             pbr_rt = _to_float(co.get("pbr"))
@@ -422,144 +383,19 @@ def run_screening(
                 "dividend_yield":    dividend_yield_rt,
             })
 
-        # 一括INSERT & commit
-        if pending:
-            with conn.cursor() as cur:
-                cur.executemany(
-                    """
-                    INSERT INTO screening_results (
-                        run_date, sec_code, name, fiscal_year,
-                        close_price, current_assets, total_liabilities, gap_oku,
-                        roa, equity_ratio, per, pbr, market_cap_oku, net_cash_ratio, dividend_yield
-                    ) VALUES (
-                        %(run_date)s, %(sec_code)s, %(name)s, %(fiscal_year)s,
-                        %(close_price)s, %(current_assets)s, %(total_liabilities)s, %(gap_oku)s,
-                        %(roa)s, %(equity_ratio)s, %(per)s, %(pbr)s, %(market_cap_oku)s, %(net_cash_ratio)s,
-                        %(dividend_yield)s
-                    )
-                    """,
-                    pending,
-                )
-        conn.commit()
+        conn.commit()   # 財務データキャッシュへの書き込みを確定
 
     pending.sort(key=lambda x: x["net_cash_ratio"] or 0, reverse=True)
     return pending, stats
 
 
 # ================================================================
-# 履歴クエリ（Streamlit / CLI 共通）
-# ================================================================
-
-def get_run_summary() -> list[dict]:
-    """実行日ごとのヒット数サマリーを返す（直近20回）。"""
-    with get_db() as conn:
-        init_db(conn)
-        rows = conn.execute(
-            """
-            SELECT run_date, COUNT(*) as count
-            FROM screening_results
-            GROUP BY run_date
-            ORDER BY run_date DESC
-            LIMIT 20
-            """
-        ).fetchall()
-    return [dict(r) for r in rows]
-
-
-def get_results_by_date(run_date: str) -> list[dict]:
-    """指定日のスクリーニング結果を返す。"""
-    with get_db() as conn:
-        rows = conn.execute(
-            "SELECT * FROM screening_results WHERE run_date = %s ORDER BY net_cash_ratio DESC",
-            (run_date,),
-        ).fetchall()
-    return [dict(r) for r in rows]
-
-
-def get_stock_history(sec_code: str) -> list[dict]:
-    """特定銘柄の出現履歴を返す。"""
-    with get_db() as conn:
-        rows = conn.execute(
-            """
-            SELECT id, run_date, sec_code, name, close_price, per, pbr, gap_oku, market_cap_oku, net_cash_ratio, dividend_yield
-            FROM screening_results
-            WHERE sec_code = %s
-            ORDER BY run_date DESC
-            """,
-            (sec_code,),
-        ).fetchall()
-    return [dict(r) for r in rows]
-
-
-def delete_screening_result(result_id: int) -> bool:
-    """履歴レコードをID指定で1件削除する。削除できた場合のみTrueを返す。"""
-    with get_db() as conn:
-        cur = conn.execute(
-            "DELETE FROM screening_results WHERE id = %s",
-            (result_id,),
-        )
-        conn.commit()
-    return cur.rowcount == 1
-
-
-def get_streak_ranking(min_hits: int = 1) -> list[dict]:
-    """累計N回以上ヒットした銘柄と連続ヒット数を返す。"""
-    with get_db() as conn:
-        rows = conn.execute(
-            """
-            SELECT sec_code, name, run_date
-            FROM screening_results
-            ORDER BY sec_code, run_date DESC
-            """
-        ).fetchall()
-        all_dates = [
-            _date_iso(r["run_date"])
-            for r in conn.execute(
-                "SELECT DISTINCT run_date FROM screening_results ORDER BY run_date DESC"
-            ).fetchall()
-        ]
-
-    stock_dates: dict[str, list] = defaultdict(list)
-    stock_names: dict[str, str]  = {}
-    for row in rows:
-        stock_dates[row["sec_code"]].append(_date_iso(row["run_date"]))
-        stock_names[row["sec_code"]] = row["name"]
-
-    results = []
-    for code, run_dates in stock_dates.items():
-        total = len(run_dates)
-        if total < min_hits:
-            continue
-        streak = sum(1 for d in all_dates if d in run_dates)  # 連続ヒット数
-        results.append({
-            "sec_code":  code,
-            "name":      stock_names[code],
-            "total":     total,
-            "streak":    streak,
-            "first_hit": min(run_dates),
-            "last_hit":  max(run_dates),
-        })
-
-    results.sort(key=lambda x: (-x["total"], -x["streak"]))
-    return results
-
-
-def get_all_results() -> list[dict]:
-    """全履歴を返す。"""
-    with get_db() as conn:
-        rows = conn.execute(
-            "SELECT * FROM screening_results ORDER BY run_date DESC, net_cash_ratio DESC"
-        ).fetchall()
-    return [dict(r) for r in rows]
-
-
-# ================================================================
-# CSV エクスポート
+# CSV エクスポート（今回の実行結果のみ。履歴は保存しないためDBからの一括出力はない）
 # ================================================================
 
 def _row_to_csv_list(row: dict) -> list:
     return [
-        _date_iso(row["run_date"]),
+        row["run_date"],
         row["name"],
         row["sec_code"],
         row["fiscal_year"],
@@ -583,12 +419,3 @@ def export_csv_bytes(rows: list[dict]) -> bytes:
     for row in rows:
         writer.writerow(_row_to_csv_list(row))
     return buf.getvalue().encode("utf-8-sig")
-
-
-def export_csv_file(rows: list[dict], filename: str) -> None:
-    """結果リストをCSVファイルに書き出す。CLI用。"""
-    with open(filename, "w", newline="", encoding="utf-8-sig") as f:
-        writer = csv.writer(f)
-        writer.writerow(CSV_HEADER)
-        for row in rows:
-            writer.writerow(_row_to_csv_list(row))

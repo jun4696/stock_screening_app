@@ -13,7 +13,5 @@ services:
         sync: false
       - key: JQUANTS_API_KEY
         sync: false
-      - key: DATABASE_URL
-        sync: false
       - key: TZ
         value: Asia/Tokyo

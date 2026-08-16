@@ -14,7 +14,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # アプリコードをコピー
-COPY screening.py app.py check_history.py ./
+COPY screening.py app.py ./
 
 
 # Streamlitのデフォルトポート

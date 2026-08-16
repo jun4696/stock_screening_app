@@ -6,35 +6,12 @@ services:
       - "8501:8501"
     env_file:
       - .env
-    environment:
-      - DATABASE_URL=postgresql://postgres:postgres@db:5432/stock_screening
-    depends_on:
-      db:
-        condition: service_healthy
     volumes:
       - ./exports:/app/exports
+      - ./data:/app/data
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-
-  db:
-    image: postgres:16-alpine
-    container_name: stock_screening_db
-    environment:
-      - POSTGRES_DB=stock_screening
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
-    volumes:
-      - pg_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d stock_screening"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-    restart: unless-stopped
-
-volumes:
-  pg_data:
