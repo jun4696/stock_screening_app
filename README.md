@@ -12,6 +12,7 @@ EDINET DB API を使って財務条件と市場指標でスクリーニングし
 | PER | 8倍 以下 | EDINET DB |
 | PBR | 0.8倍 以下 | EDINET DB |
 | 時価総額 | 500億円 以下 | EDINET DB |
+| 配当利回り | 4%以上 | EDINET DB |
 | 現在株価 | 表示のみ | J-Quants |
 
 > 条件はUI上でその場で変更できます。

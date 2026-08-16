@@ -40,11 +40,13 @@ def cmd_stock(sec_code: str) -> None:
         return
     name = history[0].get("name", sec_code)
     print(f"=== {name}（{sec_code}）の履歴 ===")
-    print(f"{'日付':<14} {'現在株価':>8} {'PER':>6} {'PBR':>5} {'差額':>8} {'時価総額':>8} {'NC比率':>8}")
-    print("-" * 70)
+    print(f"{'日付':<14} {'現在株価':>8} {'PER':>6} {'PBR':>5} {'差額':>8} {'時価総額':>8} {'NC比率':>8} {'配当利回り':>8}")
+    print("-" * 80)
     for r in history:
         net_cash_ratio = r.get("net_cash_ratio")
         net_cash_text = f"{net_cash_ratio}%" if net_cash_ratio is not None else "N/A"
+        dividend_yield = r.get("dividend_yield")
+        dividend_yield_text = f"{dividend_yield}%" if dividend_yield is not None else "N/A"
         close_price = r.get("close_price")
         close_price_text = f"{close_price:,.0f}円" if close_price is not None else "N/A"
         print(
@@ -54,7 +56,8 @@ def cmd_stock(sec_code: str) -> None:
             f"{str(r['pbr']) + '倍':>5} "
             f"{str(r['gap_oku']) + '億':>7} "
             f"{str(r['market_cap_oku']) + '億':>7} "
-            f"{net_cash_text:>8}"
+            f"{net_cash_text:>8} "
+            f"{dividend_yield_text:>8}"
         )
     print(f"\n合計 {len(history)}回ヒット")
 

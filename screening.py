@@ -43,7 +43,7 @@ API_INTERVAL = 0.3
 CSV_HEADER = [
     "実行日", "社名", "証券コード", "決算期",
     "現在株価(円)", "流動資産(億円)", "負債合計(億円)", "差額(億円)",
-    "ネットキャッシュ比率(%)", "PER(倍)", "PBR(倍)", "時価総額(億円)",
+    "ネットキャッシュ比率(%)", "PER(倍)", "PBR(倍)", "時価総額(億円)", "配当利回り(%)",
 ]
 
 
@@ -98,7 +98,8 @@ def init_db(conn: psycopg.Connection) -> None:
             per               DOUBLE PRECISION,
             pbr               DOUBLE PRECISION,
             market_cap_oku    DOUBLE PRECISION,
-            net_cash_ratio    DOUBLE PRECISION
+            net_cash_ratio    DOUBLE PRECISION,
+            dividend_yield    DOUBLE PRECISION
         )
     """)
     conn.execute("""
@@ -112,6 +113,10 @@ def init_db(conn: psycopg.Connection) -> None:
     conn.execute("""
         ALTER TABLE screening_results
         ADD COLUMN IF NOT EXISTS net_cash_ratio DOUBLE PRECISION
+    """)
+    conn.execute("""
+        ALTER TABLE screening_results
+        ADD COLUMN IF NOT EXISTS dividend_yield DOUBLE PRECISION
     """)
     conn.commit()
 
@@ -202,6 +207,20 @@ def _to_int(value) -> int | None:
         return None
 
 
+def _extract_dividend_yield(co: dict) -> float | None:
+    """EDINET DB screenerレスポンスから配当利回りを抽出する。
+
+    フィールド名の命名規則が指標によりまちまち（例: market-cap はハイフン区切り）
+    なため候補キーを順に試す。0〜1の小数（例: 0.04）で返ってきた場合はパーセント
+    表記（4.0）に正規化する。
+    """
+    for key in ("dividend_yield", "dividend-yield", "dividendYield"):
+        val = _to_float(co.get(key))
+        if val is not None:
+            return val * 100 if 0 < val <= 1 else val
+    return None
+
+
 # ================================================================
 # J-Quants 株価取得（メモリキャッシュ付き）
 # ================================================================
@@ -250,6 +269,7 @@ def run_screening(
     pbr_max: float,
     market_cap_max: float,
     net_cash_ratio_min: float,
+    dividend_yield_min: float,
     candidate_limit: int,
     progress_cb=None,   # Streamlit の st.empty() などを受け取るコールバック
 ) -> tuple[list[dict], dict]:
@@ -262,6 +282,7 @@ def run_screening(
         pbr_max:         PBR上限
         market_cap_max:  時価総額上限（億円）
         net_cash_ratio_min: ネットキャッシュ比率下限（%）
+        dividend_yield_min: 配当利回り下限（%）
         candidate_limit:  EDINET DB screenerから取得して処理する最大候補数
         progress_cb:     進捗コールバック。呼ばれるたびに (current, total, message) を受け取る。
 
@@ -357,6 +378,7 @@ def run_screening(
             pbr_rt = _to_float(co.get("pbr"))
             market_cap_million = _to_float(co.get("market-cap"))
             mktcap_oku = round(market_cap_million / 100, 1) if market_cap_million else None
+            dividend_yield_rt = _extract_dividend_yield(co)
 
             if current_assets is None or total_liabilities is None:
                 stats["skipped"] += 1
@@ -378,6 +400,7 @@ def run_screening(
             if pbr_rt     is None or pbr_rt     > pbr_max:        continue
             if mktcap_oku is None or mktcap_oku > market_cap_max: continue
             if net_cash_ratio is None or net_cash_ratio < net_cash_ratio_min: continue
+            if dividend_yield_rt is None or dividend_yield_rt < dividend_yield_min: continue
 
             close_price = get_latest_close(sec_code4) if JQUANTS_KEY else None
 
@@ -396,6 +419,7 @@ def run_screening(
                 "pbr":               pbr_rt,
                 "market_cap_oku":    mktcap_oku,
                 "net_cash_ratio":    net_cash_ratio,
+                "dividend_yield":    dividend_yield_rt,
             })
 
         # 一括INSERT & commit
@@ -406,11 +430,12 @@ def run_screening(
                     INSERT INTO screening_results (
                         run_date, sec_code, name, fiscal_year,
                         close_price, current_assets, total_liabilities, gap_oku,
-                        roa, equity_ratio, per, pbr, market_cap_oku, net_cash_ratio
+                        roa, equity_ratio, per, pbr, market_cap_oku, net_cash_ratio, dividend_yield
                     ) VALUES (
                         %(run_date)s, %(sec_code)s, %(name)s, %(fiscal_year)s,
                         %(close_price)s, %(current_assets)s, %(total_liabilities)s, %(gap_oku)s,
-                        %(roa)s, %(equity_ratio)s, %(per)s, %(pbr)s, %(market_cap_oku)s, %(net_cash_ratio)s
+                        %(roa)s, %(equity_ratio)s, %(per)s, %(pbr)s, %(market_cap_oku)s, %(net_cash_ratio)s,
+                        %(dividend_yield)s
                     )
                     """,
                     pending,
@@ -456,7 +481,7 @@ def get_stock_history(sec_code: str) -> list[dict]:
     with get_db() as conn:
         rows = conn.execute(
             """
-            SELECT id, run_date, sec_code, name, close_price, per, pbr, gap_oku, market_cap_oku, net_cash_ratio
+            SELECT id, run_date, sec_code, name, close_price, per, pbr, gap_oku, market_cap_oku, net_cash_ratio, dividend_yield
             FROM screening_results
             WHERE sec_code = %s
             ORDER BY run_date DESC
@@ -546,6 +571,7 @@ def _row_to_csv_list(row: dict) -> list:
         row["per"],
         row["pbr"],
         row["market_cap_oku"],
+        row["dividend_yield"] if row.get("dividend_yield") is not None else "N/A",
     ]
 
 

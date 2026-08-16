@@ -92,6 +92,7 @@ def _results_to_df(results: list[dict]) -> pd.DataFrame:
         "total_liabilities": "負債合計(億円)",
         "gap_oku":           "差額(億円)",
         "net_cash_ratio":    "ネットキャッシュ比率(%)",
+        "dividend_yield":    "配当利回り(%)",
         "per":               "PER(倍)",
         "pbr":               "PBR(倍)",
         "market_cap_oku":    "時価総額(億円)",
@@ -169,6 +170,7 @@ if page == "🔍 スクリーニング実行":
         pbr_max        = st.number_input("PBR 以下（倍）",      value=0.8,  step=0.1)
         market_cap_max = st.number_input("時価総額 以下（億円）", value=500,  step=50)
         net_cash_ratio_min = st.number_input("ネットキャッシュ比率 以上（%）", value=0.0, step=5.0)
+        dividend_yield_min = st.number_input("配当利回り 以上（%）", value=4.0, step=0.5)
 
     with col3:
         st.markdown("**補足条件**")
@@ -184,6 +186,7 @@ if page == "🔍 スクリーニング実行":
             "per_lte": per_max,
             "pbr_lte": pbr_max,
             "market_cap_lte": market_cap_max * 100,
+            "dividend_yield_gte": dividend_yield_min,
             "sort": "market_cap",
         }
         if selected_industry != "すべて":
@@ -204,6 +207,7 @@ if page == "🔍 スクリーニング実行":
                     pbr_max=pbr_max,
                     market_cap_max=market_cap_max,
                     net_cash_ratio_min=net_cash_ratio_min,
+                    dividend_yield_min=dividend_yield_min,
                     candidate_limit=candidate_limit,
                     progress_cb=on_progress,
                 )
@@ -334,8 +338,8 @@ elif page == "📊 履歴・銘柄追跡":
                 st.markdown(f"**{name}（{sec_code_input}）** — 合計 {len(history)}回ヒット")
 
                 df_hist = pd.DataFrame(history)
-                df_hist = df_hist[["run_date", "close_price", "per", "pbr", "gap_oku", "market_cap_oku", "net_cash_ratio"]]
-                df_hist.columns = ["日付", "現在株価(円)", "PER(倍)", "PBR(倍)", "差額(億円)", "時価総額(億円)", "ネットキャッシュ比率(%)"]
+                df_hist = df_hist[["run_date", "close_price", "per", "pbr", "gap_oku", "market_cap_oku", "net_cash_ratio", "dividend_yield"]]
+                df_hist.columns = ["日付", "現在株価(円)", "PER(倍)", "PBR(倍)", "差額(億円)", "時価総額(億円)", "ネットキャッシュ比率(%)", "配当利回り(%)"]
 
                 st.dataframe(df_hist, use_container_width=True, hide_index=True)
 
