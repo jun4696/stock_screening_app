@@ -174,13 +174,13 @@ def _extract_dividend_yield(co: dict) -> float | None:
     """EDINET DB screenerレスポンスから配当利回りを抽出する。
 
     フィールド名の命名規則が指標によりまちまち（例: market-cap はハイフン区切り）
-    なため候補キーを順に試す。0〜1の小数（例: 0.04）で返ってきた場合はパーセント
-    表記（4.0）に正規化する。
+    なため候補キーを順に試す。値はscreener側の他指標（equity_ratio等）と同様、
+    パーセント表記（例: 4.0 = 4%）で返ってくる前提でそのまま使う。
     """
     for key in ("dividend_yield", "dividend-yield", "dividendYield"):
         val = _to_float(co.get(key))
         if val is not None:
-            return val * 100 if 0 < val <= 1 else val
+            return val
     return None
 
 
