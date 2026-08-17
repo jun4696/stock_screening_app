@@ -64,6 +64,95 @@ INDUSTRIES = [
 ]
 
 
+def _inject_theme_css() -> None:
+    st.markdown(
+        """
+        <style>
+        @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Sans+JP:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+        html, body, [class*="css"] {
+            font-family: "IBM Plex Sans", "IBM Plex Sans JP", -apple-system, sans-serif;
+        }
+
+        .block-container {
+            padding-top: 32px;
+            padding-bottom: 48px;
+        }
+
+        section[data-testid="stSidebar"] .block-container {
+            padding-top: 24px;
+        }
+
+        h1, h2, h3 {
+            font-weight: 600;
+            letter-spacing: -0.01em;
+        }
+
+        /* ステータス表示ラベル（サイドバー「API接続状態」等） */
+        .status-label {
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            color: #5B6472;
+        }
+        .status-ok { color: #1F8A5F; font-weight: 500; }
+        .status-ng { color: #C0392B; font-weight: 500; }
+
+        /* ボタン: primaryColorはconfig.tomlのテーマが担当。ここは押下フィードバックのみ */
+        .stButton > button, .stDownloadButton > button {
+            border-radius: 6px;
+            transition: transform 150ms ease-out, background-color 150ms ease-out;
+        }
+        .stButton > button:active, .stDownloadButton > button:active {
+            transform: scale(0.97);
+        }
+
+        /* 指標: 数値は桁が揃うtabular-nums */
+        [data-testid="stMetricValue"] {
+            font-variant-numeric: tabular-nums;
+        }
+        [data-testid="stMetricLabel"] {
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            color: #5B6472;
+        }
+
+        /* 主要指標（条件クリア件数）— st.metricでなく単独HTMLで組む */
+        .primary-metric {
+            margin-bottom: 8px;
+        }
+        .primary-metric .primary-metric-label {
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            color: #5B6472;
+        }
+        .primary-metric .primary-metric-value {
+            font-family: "IBM Plex Mono", monospace;
+            font-variant-numeric: tabular-nums;
+            font-size: 2.75rem;
+            font-weight: 500;
+            color: #0E7C5A;
+            line-height: 1.2;
+        }
+
+        /* アラート類はベタ塗りでなくヘアライン基調に（内側のBaseWeb通知要素まで上書き） */
+        [data-testid="stAlert"] [data-baseweb="notification"] {
+            background-color: #FFFFFF !important;
+            border: 1px solid rgba(20, 24, 31, 0.10);
+            box-shadow: none;
+            color: #14181F;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def _results_to_df(results: list[dict]) -> pd.DataFrame:
     df = pd.DataFrame(results)
     if df.empty:
@@ -97,6 +186,7 @@ st.set_page_config(
     page_icon="📈",
     layout="wide",
 )
+_inject_theme_css()
 
 # 財務データキャッシュ用DB初期化（初回のみテーブル作成）
 with get_db() as conn:
@@ -106,14 +196,22 @@ with get_db() as conn:
 # サイドバー: APIキー状態
 # ----------------------------------------------------------------
 with st.sidebar:
-    st.title("📈 株式スクリーニング")
+    st.title("株式スクリーニング")
     st.divider()
 
     edinet_ok = bool(EDINETDB_KEY)
     jquants_ok = bool(JQUANTS_KEY)
-    st.markdown("**API接続状態**")
-    st.write("EDINET DB :", "✅ 接続済み" if edinet_ok else "❌ 未設定")
-    st.write("J-Quants  :", "✅ 接続済み" if jquants_ok else "❌ 未設定")
+    st.markdown('<div class="status-label">API接続状態</div>', unsafe_allow_html=True)
+    st.markdown(
+        f'EDINET DB&nbsp;&nbsp;<span class="{"status-ok" if edinet_ok else "status-ng"}">'
+        f'{"接続済み" if edinet_ok else "未設定"}</span>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f'J-Quants&nbsp;&nbsp;&nbsp;<span class="{"status-ok" if jquants_ok else "status-ng"}">'
+        f'{"接続済み" if jquants_ok else "未設定"}</span>',
+        unsafe_allow_html=True,
+    )
 
     if not edinet_ok:
         st.warning("`.env` ファイルにEDINET DB APIキーを設定してください。")
@@ -123,7 +221,7 @@ with st.sidebar:
 # ================================================================
 # スクリーニング実行
 # ================================================================
-st.title("🔍 スクリーニング実行")
+st.title("スクリーニング実行")
 st.caption("条件を設定して「実行」を押してください。結果はこの画面に表示され、CSVでダウンロードできます。")
 
 # ---- 条件設定フォーム ----
@@ -160,7 +258,11 @@ with col3:
 st.divider()
 
 # ---- 実行ボタン ----
-if st.button("▶ スクリーニングを実行", type="primary", disabled=not edinet_ok):
+if st.button(
+    "スクリーニングを実行",
+    type="primary",
+    disabled=not edinet_ok,
+):
     screener_params = {
         "per_lte": per_max,
         "pbr_lte": pbr_max,
@@ -199,12 +301,20 @@ if st.button("▶ スクリーニングを実行", type="primary", disabled=not 
 
     # ---- 結果表示 ----
     st.subheader("実行結果")
-    col_a, col_b, col_c, col_d, col_e = st.columns(5)
-    col_a.metric("取得候補",          stats["candidates"])
-    col_b.metric("処理済み",          stats.get("processed", 0))
-    col_c.metric("条件クリア",        len(results))
-    col_d.metric("キャッシュ利用",    stats["cache_hit"])
-    col_e.metric("スキップ",          stats["skipped"])
+
+    st.markdown(
+        f'<div class="primary-metric">'
+        f'<div class="primary-metric-label">条件クリア</div>'
+        f'<div class="primary-metric-value">{len(results)}</div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+    col_a, col_b, col_c, col_d = st.columns(4)
+    col_a.metric("取得候補",       stats["candidates"])
+    col_b.metric("処理済み",       stats.get("processed", 0))
+    col_c.metric("キャッシュ利用", stats["cache_hit"])
+    col_d.metric("スキップ",       stats["skipped"])
 
     if not results:
         st.warning("条件に合う銘柄がありませんでした。条件を緩めてみてください。")
@@ -213,7 +323,7 @@ if st.button("▶ スクリーニングを実行", type="primary", disabled=not 
         st.dataframe(df, use_container_width=True, hide_index=True)
 
         st.download_button(
-            label="📥 CSVダウンロード",
+            label="CSVダウンロード",
             data=export_csv_bytes(results),
             file_name=f"screening_{date.today().isoformat()}.csv",
             mime="text/csv",
